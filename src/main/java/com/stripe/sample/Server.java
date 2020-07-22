@@ -11,9 +11,12 @@ import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 
 import com.stripe.Stripe;
+import com.stripe.exception.StripeException;
 import com.stripe.model.PaymentIntent;
 import com.stripe.param.PaymentIntentCreateParams;
 
+import com.stripe.param.PaymentIntentCreateParams.CaptureMethod;
+import com.stripe.param.PaymentIntentCreateParams.ConfirmationMethod;
 import io.github.cdimascio.dotenv.Dotenv;
 
 public class Server {
@@ -30,21 +33,17 @@ public class Server {
     static class ConfirmPaymentRequest {
         @SerializedName("items")
         Object[] items;
-        @SerializedName("paymentIntentId")
-        String paymentIntentId;
         @SerializedName("paymentMethodId")
         String paymentMethodId;
         @SerializedName("currency")
         String currency;
         @SerializedName("useStripeSdk")
         String useStripeSdk;
+        @SerializedName("paymentMethodType")
+        String paymentMethodType;
 
         public Object[] getItems() {
             return items;
-        }
-
-        public String getPaymentIntentId() {
-            return paymentIntentId;
         }
 
         public String getPaymentMethodId() {
@@ -57,6 +56,10 @@ public class Server {
 
         public Boolean getUseStripeSdk() {
             return Boolean.parseBoolean(useStripeSdk);        
+        }
+
+        public String getPaymentMethodType() {
+            return paymentMethodType;
         }
     }
 
@@ -115,6 +118,41 @@ public class Server {
         return response;
     }
 
+    static CaptureMethod getCaptureMethodForPayment(String paymentMethodType) {
+        if ("afterpay_clearpay".equals(paymentMethodType)) {
+            return CaptureMethod.AUTOMATIC;
+        } else {
+            return CaptureMethod.MANUAL;
+        }
+    }
+
+
+    static PaymentIntent preCapture(ConfirmPaymentRequest confirmRequest) throws StripeException {
+        int orderAmount = calculateOrderAmount(confirmRequest.getItems());
+        // Create new PaymentIntent with a PaymentMethod ID from the client.
+        PaymentIntentCreateParams.Builder createParamsBuilder = new PaymentIntentCreateParams.Builder()
+                .setCurrency(confirmRequest.getCurrency()).setAmount(new Long(orderAmount))
+                .setPaymentMethod(confirmRequest.getPaymentMethodId())
+                .setConfirmationMethod(PaymentIntentCreateParams.ConfirmationMethod.MANUAL).setConfirm(true)
+                .setCaptureMethod(getCaptureMethodForPayment(confirmRequest.getPaymentMethodType()));
+        PaymentIntent intent =  PaymentIntent.create(createParamsBuilder.build());
+
+        // perform inventory checks
+
+
+        return intent;
+    }
+
+    static PaymentIntent capture(PaymentIntent paymentIntent) throws StripeException {
+        if ("requires_capture".equals(paymentIntent.getStatus())) {
+            paymentIntent = paymentIntent.capture();
+        } else {
+            // handle other cases like requires_payment_method, requires_action, etc
+        }
+        return paymentIntent;
+    }
+
+
     public static void main(String[] args) {
         port(4242);
         Dotenv dotenv = Dotenv.load();
@@ -135,28 +173,9 @@ public class Server {
             PaymentIntent intent = null;
             PayResponseBody responseBody = new PayResponseBody();
             try {
-                if (confirmRequest.getPaymentMethodId() != null) {
-                    int orderAmount = calculateOrderAmount(confirmRequest.getItems());
-                    // Create new PaymentIntent with a PaymentMethod ID from the client.
-                    PaymentIntentCreateParams.Builder createParamsBuilder = new PaymentIntentCreateParams.Builder()
-                            .setCurrency(confirmRequest.getCurrency()).setAmount(new Long(orderAmount))
-                            .setPaymentMethod(confirmRequest.getPaymentMethodId())
-                            .setConfirmationMethod(PaymentIntentCreateParams.ConfirmationMethod.MANUAL).setConfirm(true);
-                    if (confirmRequest.getUseStripeSdk()) {
-                        // If a mobile client passes `useStripeSdk`, set `use_stripe_sdk=true`
-                        // to take advantage of new authentication features in mobile SDKs
-                        createParamsBuilder.setUseStripeSdk(confirmRequest.getUseStripeSdk());
-                    }
-                    PaymentIntentCreateParams createParams = createParamsBuilder.build();
-                    intent = PaymentIntent.create(createParams);
-                    // After create, if the PaymentIntent's status is succeeded, fulfill the order.
-                } else if (confirmRequest.getPaymentIntentId() != null) {
-                    // Confirm the PaymentIntent to finalize payment after handling a required
-                    // action on the client.
-                    intent = PaymentIntent.retrieve(confirmRequest.getPaymentIntentId());
-                    intent = intent.confirm();
-                    // After confirm, if the PaymentIntent's status is succeeded, fulfill the order.
-                }
+                intent = preCapture(confirmRequest);
+
+                intent = capture(intent);
 
                 responseBody = generateResponse(intent, responseBody);
             } catch (Exception e) {
