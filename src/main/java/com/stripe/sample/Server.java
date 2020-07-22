@@ -118,14 +118,6 @@ public class Server {
         return response;
     }
 
-    static CaptureMethod getCaptureMethodForPayment(String paymentMethodType) {
-        if ("afterpay_clearpay".equals(paymentMethodType)) {
-            return CaptureMethod.AUTOMATIC;
-        } else {
-            return CaptureMethod.MANUAL;
-        }
-    }
-
 
     static PaymentIntent preCapture(ConfirmPaymentRequest confirmRequest) throws StripeException {
         int orderAmount = calculateOrderAmount(confirmRequest.getItems());
@@ -134,7 +126,6 @@ public class Server {
                 .setCurrency(confirmRequest.getCurrency()).setAmount(new Long(orderAmount))
                 .setPaymentMethod(confirmRequest.getPaymentMethodId())
                 .setConfirmationMethod(PaymentIntentCreateParams.ConfirmationMethod.MANUAL).setConfirm(true)
-                .setCaptureMethod(getCaptureMethodForPayment(confirmRequest.getPaymentMethodType()));
         PaymentIntent intent =  PaymentIntent.create(createParamsBuilder.build());
 
         // perform inventory checks
